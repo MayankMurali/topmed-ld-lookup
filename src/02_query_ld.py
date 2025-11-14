@@ -64,10 +64,10 @@ def find_ld_pairs(con, pos, chr_num, r2_min):
         print(f"Error: LD file not found for chromosome {chr_num}", file=sys.stderr)
         return None
 
-    print(f"Querying LD pairs on chr{chr_num}...")
+    print(f"Querying LD pairs on {chr_num}...")
     
-    # This query finds pairs where our SNP is either SNP1 or SNP2
-    # It also joins back to the info file to get the rsIDs for the *other* SNPs
+    # This query finds pairs, groups by position, and aggregates
+    # rsIDs and gene names into clean lists.
     query = f"""
     WITH AllPairs AS (
         -- Find pairs where our SNP is SNP1
@@ -89,16 +89,25 @@ def find_ld_pairs(con, pos, chr_num, r2_min):
         WHERE SNP2 = {pos} AND R2 >= {r2_min}
     )
     
-    -- Join with the info file to get rsID and details for the paired SNPs
+    -- Join with the info file to get rsID and details
     SELECT 
-        info.rsID AS Paired_rsID,
-        info.Position AS Paired_Position,
+        p.PairedPosition,
+        -- Aggregate all rsIDs at that position, filtering out '.'
+        string_agg(
+            CASE WHEN info.rsID != '.' THEN info.rsID ELSE NULL END, 
+            ', '
+        ) AS Paired_rsIDs,
         p.R2,
         p.Dprime,
-        info.VEP_ensembl_Gene_Name AS Gene
+        -- Get a distinct list of the *first* gene name from the annotation
+        string_agg(
+            DISTINCT split(info.VEP_ensembl_Gene_Name, '|')[1], 
+            ', '
+        ) AS Genes
     FROM AllPairs AS p
     LEFT JOIN read_parquet('{INFO_MASTER_FILE}') AS info
         ON p.PairedPosition = info.Position
+    GROUP BY p.PairedPosition, p.R2, p.Dprime
     ORDER BY p.R2 DESC
     """
     
